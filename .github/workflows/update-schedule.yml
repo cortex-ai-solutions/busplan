@@ -1,0 +1,41 @@
+name: Update Bus Schedule
+
+on:
+  schedule:
+    # Run on the 1st of January, April, July, October at 06:00 UTC
+    - cron: '0 6 1 1,4,7,10 *'
+  workflow_dispatch:  # Allow manual trigger from GitHub Actions tab
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download VMT GTFS
+        run: |
+          curl -L -o /tmp/vmt_gtfs.zip \
+            "https://www.vmt-thueringen.de/fileadmin/VMT_Redaktion/OPEN_DATA/VMT_GTFS.zip"
+          echo "Downloaded: $(du -sh /tmp/vmt_gtfs.zip | cut -f1)"
+
+      - name: Extract schedule data
+        run: python scripts/extract_gtfs.py /tmp/vmt_gtfs.zip
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git diff --quiet data/ data-bundle.js || (
+            git add data/d1.json data/d2.json data/s21.json data-bundle.js &&
+            git commit -m "Update D1/D2 schedule from VMT GTFS ($(date +%Y-%m-%d))" &&
+            git push
+          )
+          echo "Done — no changes to commit or changes pushed."

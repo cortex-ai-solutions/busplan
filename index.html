@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="theme-color" content="#525252">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Busplan">
+  <title>Busplan</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header>
+    <div class="header-inner">
+      <img src="design/logo-2.png" alt="SNG Bus" class="header-logo">
+      <div>
+        <h1>Busplan</h1>
+        <p class="header-sub">SNG Suhl</p>
+      </div>
+    </div>
+  </header>
+
+  <main>
+
+    <div id="stale-warning" class="banner banner--warning" hidden>
+      ⚠️ Der Fahrplan könnte veraltet sein — bitte Papa fragen!
+    </div>
+
+    <section class="card controls-card">
+      <div class="control-row">
+        <label class="control-label" for="stop-from">Von</label>
+        <select id="stop-from" class="select-input">
+          <option value="">Wird geladen…</option>
+        </select>
+      </div>
+      <div class="control-row">
+        <label class="control-label" for="stop-to">Nach</label>
+        <select id="stop-to" class="select-input">
+          <option value="">Alle Richtungen</option>
+        </select>
+      </div>
+      <div class="control-row time-row">
+        <button id="btn-now" class="btn btn--primary">Jetzt</button>
+        <div class="time-select-wrap">
+          <select id="hour-select" class="time-select"></select>
+          <span class="time-sep">:</span>
+          <select id="min-select" class="time-select time-select--min">
+            <option value="0">00</option>
+            <option value="5">05</option>
+            <option value="10">10</option>
+            <option value="15">15</option>
+            <option value="20">20</option>
+            <option value="25">25</option>
+            <option value="30">30</option>
+            <option value="35">35</option>
+            <option value="40">40</option>
+            <option value="45">45</option>
+            <option value="50">50</option>
+            <option value="55">55</option>
+          </select>
+        </div>
+      </div>
+      <div class="day-buttons">
+        <button class="day-btn" data-day="weekday">Werktag</button>
+        <button class="day-btn" data-day="saturday">Samstag</button>
+        <button class="day-btn" data-day="sunday">Sonn/Feiertag</button>
+      </div>
+      <div class="line-buttons" id="line-buttons"></div>
+    </section>
+
+    <div id="day-indicator" class="day-indicator"></div>
+
+    <div id="departures-container">
+      <div class="loading-state">
+        <div class="spinner"></div>
+        <p>Fahrplan wird geladen…</p>
+      </div>
+    </div>
+
+  </main>
+
+  <footer>
+    <p id="data-validity">Daten: SNG Suhl</p>
+    <p class="footer-hint">Daten: VMT Thüringen GTFS (CC-BY)</p>
+  </footer>
+
+  <script src="data-bundle.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
