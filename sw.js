@@ -1,7 +1,7 @@
 /* Helena's Busplan — Service Worker
    Caches app shell on install; serves from cache, updates in background. */
 
-const CACHE_NAME = 'busplan-v3';
+const CACHE_NAME = 'busplan-v4';
 const SHELL = [
   './',
   './index.html',
@@ -11,7 +11,7 @@ const SHELL = [
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
-  './design/logo-2.png'
+  './design/logo-3.png'
 ];
 
 self.addEventListener('install', event => {
