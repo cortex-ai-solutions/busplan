@@ -243,9 +243,11 @@ function getNextDepartures(lineData, fromStop, toStop, fromMins, windowMins, day
     const fromIdx = dir.stops.indexOf(fromStop);
     if (fromIdx === -1) continue;
 
-    const toIdx = toStop ? dir.stops.indexOf(toStop) : -1;
-    if (toStop && toIdx === -1) continue;       // Ziel nicht in dieser Richtung
-    if (toStop && toIdx <= fromIdx) continue;   // Ziel liegt vor Start → falsche Richtung
+    // Suche Ziel-Stop NACH dem Start (Ringlinie: selber Stopname kann zweimal vorkommen)
+    const toIdx = toStop
+      ? dir.stops.findIndex((s, i) => s === toStop && i > fromIdx)
+      : -1;
+    if (toStop && toIdx === -1) continue;  // Ziel nicht erreichbar in dieser Richtung
 
     const trips = dir.schedules[dayType] || [];
     for (const trip of trips) {
