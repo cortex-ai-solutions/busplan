@@ -2,12 +2,13 @@
    Loads D1/D2 GTFS-derived JSON data and renders upcoming departures.
    Circular routes: each line runs a loop, fromStop must precede toStop in sequence. */
 
-const DEFAULT_FROM  = 'Goldlauter, Suhler Straße';
-const DEFAULT_LINE  = 'D1';
-const STORAGE_FROM  = 'busplan_from';
-const STORAGE_TO    = 'busplan_to';
-const STORAGE_LINE  = 'busplan_line';
-const LINE_CLASSES  = { D1: 'd1', D2: 'd2', S21: 's21' };
+const DEFAULT_FROM      = 'Goldlauter, Suhler Straße';
+const DEFAULT_LINE      = 'D1';
+const STORAGE_FROM      = 'busplan_from';
+const STORAGE_TO        = 'busplan_to';
+const STORAGE_LINE      = 'busplan_line';
+const STORAGE_FAVORITES = 'busplan_favorites';
+const LINE_CLASSES      = { D1: 'd1', D2: 'd2', S21: 's21' };
 
 let linesData    = [];
 let holidayDates = new Set();
@@ -92,6 +93,7 @@ async function loadData() {
     buildLineButtons();
     checkDataFreshness();
     restorePreferences();
+    renderFavorites();
     render();
 
     if ('serviceWorker' in navigator) {
@@ -232,6 +234,79 @@ function savePreferences() {
   localStorage.setItem(STORAGE_FROM, document.getElementById('stop-from').value);
   localStorage.setItem(STORAGE_TO,   document.getElementById('stop-to').value);
   localStorage.setItem(STORAGE_LINE, activeLine);
+}
+
+// ── Favorites ────────────────────────────────────────────────
+
+function getFavorites() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_FAVORITES) || '[]'); }
+  catch { return []; }
+}
+
+function setFavorites(favs) {
+  localStorage.setItem(STORAGE_FAVORITES, JSON.stringify(favs));
+}
+
+function saveFavorite() {
+  const from = document.getElementById('stop-from').value;
+  const to   = document.getElementById('stop-to').value;
+  if (!from) return;
+  const label = to ? `${from} → ${to}` : `${from} · Alle`;
+  const fav   = { label, from, to, line: activeLine };
+  const favs  = getFavorites();
+  // Kein Duplikat
+  if (favs.some(f => f.from === from && f.to === to && f.line === activeLine)) return;
+  favs.push(fav);
+  setFavorites(favs);
+  renderFavorites();
+}
+
+function applyFavorite(fav) {
+  activeLine = fav.line;
+  document.querySelectorAll('.line-btn').forEach(b =>
+    b.classList.toggle('line-btn--active', b.dataset.line === activeLine)
+  );
+  buildVonList();
+  const fromEl = document.getElementById('stop-from');
+  if ([...fromEl.options].some(o => o.value === fav.from)) fromEl.value = fav.from;
+  buildNachList(fromEl.value);
+  const toEl = document.getElementById('stop-to');
+  if ([...toEl.options].some(o => o.value === fav.to)) toEl.value = fav.to;
+  savePreferences();
+  render();
+}
+
+function renderFavorites() {
+  const row  = document.getElementById('favorites-row');
+  if (!row) return;
+  const favs = getFavorites();
+
+  const chips = favs.map((fav, i) => `
+    <button class="fav-btn" data-idx="${i}">
+      <span class="fav-label">${fav.label}</span>
+      <span class="fav-line-tag line-badge--${(LINE_CLASSES[fav.line] || fav.line.toLowerCase())}">${fav.line}</span>
+      <span class="fav-delete" data-del="${i}" title="Entfernen">×</span>
+    </button>`).join('');
+
+  const saveBtn = `<button class="fav-btn fav-btn--save" id="btn-save-fav">★ Speichern</button>`;
+  row.innerHTML = chips + saveBtn;
+
+  row.querySelectorAll('.fav-btn[data-idx]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      if (e.target.dataset.del !== undefined) return; // handled below
+      applyFavorite(favs[+btn.dataset.idx]);
+    });
+  });
+  row.querySelectorAll('.fav-delete').forEach(x => {
+    x.addEventListener('click', e => {
+      e.stopPropagation();
+      const favs2 = getFavorites();
+      favs2.splice(+x.dataset.del, 1);
+      setFavorites(favs2);
+      renderFavorites();
+    });
+  });
+  document.getElementById('btn-save-fav').addEventListener('click', saveFavorite);
 }
 
 // ── Query engine ─────────────────────────────────────────────
