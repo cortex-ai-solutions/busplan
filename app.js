@@ -97,12 +97,48 @@ async function loadData() {
     render();
 
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
+      navigator.serviceWorker.register('sw.js').then(watchForUpdate).catch(() => {});
     }
   } catch (err) {
     document.getElementById('departures-container').innerHTML =
       `<div class="empty-state"><p>⚠️ ${err.message}</p></div>`;
   }
+}
+
+// ── Service-Worker-Update ───────────────────────────
+
+function showUpdateBanner() {
+  const el = document.getElementById('update-banner');
+  if (el) el.hidden = false;
+}
+
+// Meldet eine neue App-Version, sobald der Service Worker sie geladen hat.
+// Beim allerersten Besuch (kein controller) wird nichts angezeigt.
+function watchForUpdate(reg) {
+  if (!reg) return;
+  const hadController = !!navigator.serviceWorker.controller;
+
+  // Version wartet bereits (z.B. App war länger geschlossen)
+  if (reg.waiting && hadController) showUpdateBanner();
+
+  reg.addEventListener('updatefound', () => {
+    const incoming = reg.installing;
+    if (!incoming) return;
+    incoming.addEventListener('statechange', () => {
+      if (incoming.state === 'installed' && hadController) showUpdateBanner();
+    });
+  });
+
+  // Fallback: der neue SW hat per skipWaiting() schon übernommen
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController) showUpdateBanner();
+  });
+
+  // Beim Start und bei jeder Rückkehr in den Vordergrund nach Updates suchen
+  reg.update().catch(() => {});
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') reg.update().catch(() => {});
+  });
 }
 
 function checkDataFreshness() {
@@ -357,6 +393,61 @@ function getNextDepartures(lineData, fromStop, toStop, fromMins, windowMins, day
   return results.sort((a, b) => a.depMins - b.depMins);
 }
 
+// ── Einstieg / Fahrtrichtung ────────────────────────
+
+// Viele Haltestellen haben zwei Einstiegspunkte (je Straßenseite).
+// Aus der Stopsequenz lässt sich datengetrieben ableiten, woher der Bus kommt
+// und wohin er weiterfährt — die richtige Seite ist immer die in Fahrtrichtung.
+function getBoardingInfo(lineData, fromStop, toStop) {
+  const seen  = new Set();
+  const infos = [];
+
+  for (const dir of lineData.directions) {
+    const fromIdx = dir.stops.indexOf(fromStop);
+    if (fromIdx === -1) continue;
+
+    // Nur Richtungen berücksichtigen, in denen das Ziel erreichbar ist
+    if (toStop && dir.stops.findIndex((s, i) => s === toStop && i > fromIdx) === -1) continue;
+
+    const comesFrom = fromIdx > 0 ? dir.stops[fromIdx - 1] : null;
+    const goesTo    = fromIdx < dir.stops.length - 1 ? dir.stops[fromIdx + 1] : null;
+    if (!comesFrom && !goesTo) continue;
+
+    const key = `${comesFrom}|${goesTo}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    infos.push({ comesFrom, goesTo });
+  }
+  return infos;
+}
+
+function renderBoardingHint(lineData, fromStop, toStop, show) {
+  const el = document.getElementById('boarding-hint');
+  if (!el) return;
+
+  const infos = (show && lineData) ? getBoardingInfo(lineData, fromStop, toStop) : [];
+  if (!infos.length) {
+    el.innerHTML = '';
+    el.hidden = true;
+    return;
+  }
+
+  el.hidden = false;
+  el.innerHTML = infos.map(info => {
+    const side = info.goesTo
+      ? `Seite Richtung <b>${info.goesTo}</b>`
+      : 'Endhaltestelle — hier steigt man aus';
+    const origin = info.comesFrom
+      ? `Bus kommt von ${info.comesFrom}`
+      : 'Startpunkt der Linie';
+    return `
+      <div class="board-hint">
+        <div class="bh-side"><span class="bh-ico">🚏</span>${side}</div>
+        <div class="bh-from">${origin}</div>
+      </div>`;
+  }).join('');
+}
+
 // ── Rendering ────────────────────────────────────────────────
 
 function buildCard(dep, isFirst) {
@@ -425,16 +516,15 @@ function render() {
   let html = '';
   let totalFound = 0;
 
-  for (const lineData of linesData) {
-    if (lineData.line !== activeLine) continue;
-
-    const deps = getNextDepartures(lineData, fromStop, toStop, fromMins, 0, dayType, nowMins);
-    totalFound += deps.length;
-
-    if (!deps.length) continue;
-
-    html += deps.map((d, i) => buildCard(d, i === 0)).join('');
+  const activeData = linesData.find(l => l.line === activeLine) || null;
+  if (activeData) {
+    const deps = getNextDepartures(activeData, fromStop, toStop, fromMins, 0, dayType, nowMins);
+    totalFound = deps.length;
+    html = deps.map((d, i) => buildCard(d, i === 0)).join('');
   }
+
+  // Einstiegs-Hinweis nur zeigen, wenn es überhaupt Abfahrten gibt
+  renderBoardingHint(activeData, fromStop, toStop, totalFound > 0);
 
   if (totalFound === 0) {
     html = `<div class="empty-state"><p>Kein Bus ab ${minutesToTime(fromMins)} Uhr 🕐</p></div>`;
@@ -508,6 +598,19 @@ document.addEventListener('DOMContentLoaded', () => {
     savePreferences();
     render();
   });
+
+  // Update-Banner: wartenden Service Worker aktivieren, dann neu laden
+  const updateBanner = document.getElementById('update-banner');
+  if (updateBanner) {
+    updateBanner.addEventListener('click', () => {
+      updateBanner.disabled = true;
+      updateBanner.querySelector('.ub-action').textContent = '…';
+      navigator.serviceWorker.getRegistration()
+        .then(reg => { if (reg && reg.waiting) reg.waiting.postMessage('SKIP_WAITING'); })
+        .catch(() => {})
+        .then(() => location.reload());
+    });
+  }
 
   btnNow.classList.add('btn--active');
 

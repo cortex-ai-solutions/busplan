@@ -1,7 +1,7 @@
 /* Helena's Busplan — Service Worker
    Caches app shell on install; serves from cache, updates in background. */
 
-const CACHE_NAME = 'busplan-v5';
+const CACHE_NAME = 'busplan-v6';
 const SHELL = [
   './',
   './index.html',
@@ -16,9 +16,18 @@ const SHELL = [
 
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(SHELL))
+    // cache:'reload' umgeht den HTTP-Cache (GitHub Pages liefert max-age=600),
+    // sonst landen kurz nach einem Deploy die alten Dateien im neuen Cache.
+    caches.open(CACHE_NAME).then(cache =>
+      cache.addAll(SHELL.map(url => new Request(url, { cache: 'reload' })))
+    )
   );
   self.skipWaiting();
+});
+
+// Erlaubt der Seite, ein wartendes Update sofort zu aktivieren
+self.addEventListener('message', event => {
+  if (event.data === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', event => {

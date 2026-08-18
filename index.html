@@ -75,6 +75,8 @@
 
     <div id="day-indicator" class="day-indicator"></div>
 
+    <div id="boarding-hint" hidden></div>
+
     <div id="departures-container">
       <div class="loading-state">
         <div class="spinner"></div>
@@ -88,6 +90,12 @@
     <p id="data-validity">Daten: SNG Suhl</p>
     <p class="footer-hint">Daten: VMT Thüringen GTFS (CC-BY)</p>
   </footer>
+
+  <button id="update-banner" class="update-banner" type="button" hidden>
+    <span class="ub-icon">⬆️</span>
+    <span class="ub-text">Neue Version verfügbar</span>
+    <span class="ub-action">Aktualisieren</span>
+  </button>
 
   <script src="data-bundle.js"></script>
   <script src="app.js"></script>
