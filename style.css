@@ -313,7 +313,7 @@ main {
 }
 
 .line-btn {
-  flex: 1;
+  flex: 1 1 30%;
   min-height: 44px;
   border: 2px solid var(--purple-200);
   border-radius: var(--radius-sm);
@@ -331,6 +331,9 @@ main {
 .line-btn--active               { background: var(--purple-600); border-color: var(--purple-600); color: #fff; }
 .line-btn--active.line-btn--d2  { background: var(--purple-500); border-color: var(--purple-500); }
 .line-btn--active.line-btn--s21 { background: #D97706;           border-color: #D97706; }
+.line-btn--active.line-btn--c1  { background: #0F766E;           border-color: #0F766E; }
+.line-btn--active.line-btn--c2  { background: #14B8A6;           border-color: #14B8A6; }
+.line-btn--active.line-btn--c12 { background: #0D9488;           border-color: #0D9488; }
 
 /* ── Button ── */
 .btn {
@@ -493,6 +496,9 @@ main {
 .line-badge--d1  { background: var(--purple-600); color: #fff; }
 .line-badge--d2  { background: var(--purple-400); color: var(--purple-900); }
 .line-badge--s21 { background: #D97706; color: #fff; }
+.line-badge--c1  { background: #0F766E; color: #fff; }
+.line-badge--c2  { background: #99F6E4; color: #134E4A; }
+.line-badge--c12 { background: #14B8A6; color: #fff; }
 
 .line-label {
   font-size: 0.8rem;

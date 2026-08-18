@@ -8,7 +8,7 @@ const STORAGE_FROM      = 'busplan_from';
 const STORAGE_TO        = 'busplan_to';
 const STORAGE_LINE      = 'busplan_line';
 const STORAGE_FAVORITES = 'busplan_favorites';
-const LINE_CLASSES      = { D1: 'd1', D2: 'd2', S21: 's21' };
+const LINE_CLASSES      = { D1: 'd1', D2: 'd2', S21: 's21', C1: 'c1', C2: 'c2', C12: 'c12' };
 
 let linesData    = [];
 let holidayDates = new Set();
@@ -399,8 +399,9 @@ function getNextDepartures(lineData, fromStop, toStop, fromMins, windowMins, day
 // Aus der Stopsequenz lässt sich datengetrieben ableiten, woher der Bus kommt
 // und wohin er weiterfährt — die richtige Seite ist immer die in Fahrtrichtung.
 function getBoardingInfo(lineData, fromStop, toStop) {
-  const seen  = new Set();
-  const infos = [];
+  // Eine Linie kann mehrere Fahrtvarianten haben (C1 hat ein halbes Dutzend).
+  // Entscheidend ist nur die Seite — also nach der Folgehaltestelle gruppieren.
+  const byNext = new Map();
 
   for (const dir of lineData.directions) {
     const fromIdx = dir.stops.indexOf(fromStop);
@@ -413,12 +414,18 @@ function getBoardingInfo(lineData, fromStop, toStop) {
     const goesTo    = fromIdx < dir.stops.length - 1 ? dir.stops[fromIdx + 1] : null;
     if (!comesFrom && !goesTo) continue;
 
-    const key = `${comesFrom}|${goesTo}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    infos.push({ comesFrom, goesTo });
+    if (!byNext.has(goesTo)) byNext.set(goesTo, new Set());
+    if (comesFrom) byNext.get(goesTo).add(comesFrom);
   }
-  return infos;
+
+  // Varianten, die hier enden, nur zeigen wenn es sonst nichts gibt
+  if (byNext.size > 1) byNext.delete(null);
+
+  return [...byNext].slice(0, 3).map(([goesTo, origins]) => ({
+    goesTo,
+    // "Bus kommt von X" nur, wenn alle Varianten aus derselben Richtung kommen
+    comesFrom: origins.size === 1 ? [...origins][0] : null
+  }));
 }
 
 function renderBoardingHint(lineData, fromStop, toStop, show) {
@@ -438,12 +445,12 @@ function renderBoardingHint(lineData, fromStop, toStop, show) {
       ? `Seite Richtung <b>${info.goesTo}</b>`
       : 'Endhaltestelle — hier steigt man aus';
     const origin = info.comesFrom
-      ? `Bus kommt von ${info.comesFrom}`
-      : 'Startpunkt der Linie';
+      ? `<div class="bh-from">Bus kommt von ${info.comesFrom}</div>`
+      : '';
     return `
       <div class="board-hint">
         <div class="bh-side"><span class="bh-ico">🚏</span>${side}</div>
-        <div class="bh-from">${origin}</div>
+        ${origin}
       </div>`;
   }).join('');
 }

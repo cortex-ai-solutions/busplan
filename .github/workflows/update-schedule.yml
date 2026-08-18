@@ -34,8 +34,8 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git diff --quiet data/ data-bundle.js || (
-            git add data/d1.json data/d2.json data/s21.json data-bundle.js &&
-            git commit -m "Update D1/D2 schedule from VMT GTFS ($(date +%Y-%m-%d))" &&
+            git add data/*.json data-bundle.js &&
+            git commit -m "Update schedule from VMT GTFS ($(date +%Y-%m-%d))" &&
             git push
           )
           echo "Done — no changes to commit or changes pushed."

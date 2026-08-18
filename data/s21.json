@@ -1,10 +1,10 @@
 {
   "line": "S21",
-  "valid_from": "2026-05-01",
-  "valid_until": "2026-11-30",
+  "valid_from": "2026-07-01",
+  "valid_until": "2027-01-31",
   "directions": [
     {
-      "id": "dir0",
+      "id": "dir0_0",
       "direction_id": "0",
       "headsign": "Suhl, Rimbachstraße",
       "stops": [
@@ -65,7 +65,7 @@
       }
     },
     {
-      "id": "dir1",
+      "id": "dir1_1",
       "direction_id": "1",
       "headsign": "Suhl, Am Bahndamm ",
       "stops": [
@@ -114,9 +114,9 @@
             "13:32",
             "13:33",
             "13:34",
-            "14:07",
-            "14:08",
-            "14:10",
+            "13:36",
+            "13:37",
+            "13:39",
             "13:41",
             "13:45",
             "13:46",
