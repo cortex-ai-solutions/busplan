@@ -377,9 +377,19 @@ function getNextDepartures(lineData, fromStop, toStop, fromMins, windowMins, day
 
       const arrTime = toIdx !== -1 ? trip[toIdx] : null;
 
+      // Tatsächlicher Fahrtverlauf: erste/letzte Haltestelle mit Zeit.
+      // Unterscheidet Busse, die am selben Stop kurz nacheinander ankommen.
+      const firstIdx = trip.findIndex(Boolean);
+      let lastIdx = trip.length - 1;
+      while (lastIdx > 0 && !trip[lastIdx]) lastIdx--;
+      const originStop = firstIdx < fromIdx ? dir.stops[firstIdx] : null;
+      const endStop    = dir.stops[lastIdx];
+
       results.push({
         line:      lineData.line,
         headsign:  dir.headsign,
+        originStop,
+        endStop,
         depTime,
         depMins,
         arrTime,
@@ -390,7 +400,16 @@ function getNextDepartures(lineData, fromStop, toStop, fromMins, windowMins, day
     }
   }
 
-  return results.sort((a, b) => a.depMins - b.depMins);
+  // Sicherheitsnetz: identische Fahrt (Zeit, Start, Ende) nur einmal zeigen
+  const seen = new Set();
+  return results
+    .filter(r => {
+      const key = `${r.depTime}|${r.originStop}|${r.endStop}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.depMins - b.depMins);
 }
 
 // ── Einstieg / Fahrtrichtung ────────────────────────
@@ -467,10 +486,14 @@ function buildCard(dep, isFirst) {
     : 'dep-countdown';
 
   const lineCls = LINE_CLASSES[dep.line] || dep.line.toLowerCase();
-  const dirLabel = dep.arrStop || dep.headsign.trim();
+  const dirLabel = dep.arrStop || (dep.endStop || dep.headsign).trim();
 
   const arrivalHtml = dep.arrTime
     ? `<div class="dep-arrival">Ankunft: ${dep.arrTime}</div>`
+    : '';
+
+  const originHtml = dep.originStop
+    ? `<div class="dep-origin">Fahrt ab ${dep.originStop.trim()}</div>`
     : '';
 
   return `
@@ -479,6 +502,7 @@ function buildCard(dep, isFirst) {
       <div class="dep-info">
         <div class="dep-direction">→ ${dirLabel}</div>
         ${arrivalHtml}
+        ${originHtml}
       </div>
       <div class="dep-right">
         <span class="dep-line line-badge--${lineCls}">${dep.line}</span>

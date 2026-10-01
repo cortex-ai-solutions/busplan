@@ -569,7 +569,13 @@ main {
   color: var(--text-secondary);
 }
 
-.departure-card--next .dep-arrival { color: rgba(255,255,255,0.75); }
+.dep-origin {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.departure-card--next .dep-arrival,
+.departure-card--next .dep-origin { color: rgba(255,255,255,0.75); }
 
 /* Right column: line badge + countdown stacked */
 .dep-right {

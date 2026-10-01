@@ -25,14 +25,6 @@ def normalize_time(t):
     return f"{h:02d}:{m:02d}"
 
 
-def get_day_type(row):
-    if row.get("saturday") == "1": return "saturday"
-    if row.get("sunday")   == "1": return "sunday"
-    for day in ["monday","tuesday","wednesday","thursday","friday"]:
-        if row.get(day) == "1": return "weekday"
-    return None
-
-
 def fmt_date(d):
     return f"{d[:4]}-{d[4:6]}-{d[6:8]}" if d else ""
 
@@ -82,35 +74,53 @@ def classify_date(yyyymmdd, holidays):
     return "weekday"
 
 
-def build_service_days(calendar, calendar_dates, holidays):
-    """Tagestyp je service_id.
+def build_service_calendar(calendar, calendar_dates):
+    """Aktive service_ids je Datum (calendar.txt + calendar_dates.txt-Ausnahmen).
 
-    Seit dem VMT-Feed vom Juli 2026 stehen die Wochentags-Flags in calendar.txt
-    bei vielen Diensten auf 0 — die echten Verkehrstage kommen dann nur noch
-    aus calendar_dates.txt. Also: erst die Flags auswerten, sonst den
-    ueberwiegenden Tagestyp aus den Einzelterminen ableiten.
+    Der Feed enthaelt je Linie mehrere zeitlich begrenzte Fahrplanversionen
+    (z.B. Ferienfahrplan bis 09.10., Regelfahrplan ab 12.10.). Wer die
+    service_ids nur nach Tagesart sortiert, wirft alle Versionen zusammen und
+    zeigt dann doppelte Abfahrten bzw. Abfahrten wenige Minuten daneben.
+    Deshalb wird je Datum aufgeloest, welche Dienste wirklich fahren.
     """
-    result = {}
-    for row in calendar:
-        day_type = get_day_type(row)
-        if day_type: result[row["service_id"]] = day_type
+    weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    active = defaultdict(set)
 
-    added = defaultdict(list)
+    for row in calendar:
+        start = datetime.datetime.strptime(row["start_date"], "%Y%m%d").date()
+        end   = datetime.datetime.strptime(row["end_date"],   "%Y%m%d").date()
+        flags = [row.get(d) == "1" for d in weekdays]
+        if not any(flags): continue
+        day = start
+        while day <= end:
+            if flags[day.weekday()]:
+                active[day.strftime("%Y%m%d")].add(row["service_id"])
+            day += datetime.timedelta(days=1)
+
     for row in calendar_dates:
         if row.get("exception_type") == "1":
-            added[row["service_id"]].append(row["date"])
+            active[row["date"]].add(row["service_id"])
+        elif row.get("exception_type") == "2":
+            active[row["date"]].discard(row["service_id"])
 
-    from_dates = 0
-    for service_id, dates in added.items():
-        if service_id in result: continue
-        counts = Counter(classify_date(d, holidays) for d in dates)
-        if counts:
-            result[service_id] = counts.most_common(1)[0][0]
-            from_dates += 1
+    return active
 
-    print(f"Service-Tagestypen: {len(result)} "
-          f"({len(result) - from_dates} aus calendar.txt, {from_dates} aus calendar_dates.txt)")
-    return result
+
+def pick_services(line_services, active, holidays, from_date, until_date):
+    """Je Tagesart die Dienstmenge, die im Zeitraum am haeufigsten gilt.
+
+    Ab `from_date` (Extraktionstag), damit abgelaufene Ferien-/Altfahrplaene
+    nicht mit dem kommenden Regelfahrplan vermischt werden. Einzelne
+    Sondertage (Feiertage, Brueckentage) fallen als Minderheit heraus.
+    """
+    counts = defaultdict(Counter)
+    for date, services in active.items():
+        if not (from_date <= date <= until_date): continue
+        todays = frozenset(services & line_services)
+        if todays:
+            counts[classify_date(date, holidays)][todays] += 1
+
+    return {day_type: set(c.most_common(1)[0][0]) for day_type, c in counts.items()}
 
 
 def extract(gtfs_zip_path):
@@ -133,7 +143,12 @@ def extract(gtfs_zip_path):
     valid_until = fmt_date(feed_info[0].get("feed_end_date", ""))
     print(f"Feed validity: {valid_from} to {valid_until}")
 
-    service_day = build_service_days(calendar, calendar_dates, load_holidays())
+    holidays    = load_holidays()
+    active_days = build_service_calendar(calendar, calendar_dates)
+    # Ab heute — bzw. Feedbeginn, falls der Feed in der Zukunft startet
+    from_date   = max(datetime.date.today().strftime("%Y%m%d"),
+                      feed_info[0].get("feed_start_date", ""))
+    until_date  = feed_info[0].get("feed_end_date") or "99999999"
     stop_names  = {s["stop_id"]: s["stop_name"] for s in stops}
 
     target_routes = {r["route_short_name"]: r["route_id"]
@@ -154,6 +169,11 @@ def extract(gtfs_zip_path):
         trip_hs      = {t["trip_id"]: t.get("trip_headsign","") for t in line_trips}
         trip_service = {t["trip_id"]: t["service_id"] for t in line_trips}
 
+        line_services = {t["service_id"] for t in line_trips}
+        chosen = pick_services(line_services, active_days, holidays, from_date, until_date)
+        for day_type, services in sorted(chosen.items()):
+            print(f"  {day_type}: Dienste {sorted(services)}")
+
         trip_st = defaultdict(list)
         for row in st:
             if row["trip_id"] in all_trip_ids:
@@ -170,7 +190,7 @@ def extract(gtfs_zip_path):
         for t in line_trips:
             tid = t["trip_id"]
             if not trip_st[tid]: continue
-            if not service_day.get(t["service_id"]): continue
+            if not any(t["service_id"] in svcs for svcs in chosen.values()): continue
             did = t.get("direction_id", "0")
             patterns[(did, tuple(s[1] for s in trip_st[tid]))].append(tid)
 
@@ -200,12 +220,16 @@ def extract(gtfs_zip_path):
 
             schedules = defaultdict(list)
             for tid in ref["trips"]:
-                day_type = service_day.get(trip_service[tid])
                 row = align_row([(s[1], normalize_time(s[2])) for s in trip_st[tid]], ref_ids)
-                if row and any(row): schedules[day_type].append(row)
+                if not (row and any(row)): continue
+                for day_type, services in chosen.items():
+                    if trip_service[tid] in services:
+                        schedules[day_type].append(row)
 
             for day_type in schedules:
-                schedules[day_type].sort(key=first_time)
+                # Identische Fahrten (gleiche Zeiten) nur einmal behalten
+                unique = {tuple(r): r for r in schedules[day_type]}
+                schedules[day_type] = sorted(unique.values(), key=first_time)
                 print(f"    {day_type}: {len(schedules[day_type])} trips")
 
             directions_out.append({
