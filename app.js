@@ -14,6 +14,7 @@ let linesData    = [];
 let holidayDates = new Set();
 let activeLine    = DEFAULT_LINE;
 let customTime    = null;  // null = live clock (rounded to 5 min)
+let previewDate   = null;  // null = heute gültiger Fahrplan; sonst Datum des kommenden Fahrplans
 let activeDayType = null;  // null = auto-detect; 'weekday'|'saturday'|'sunday' = manual
 let refreshTimer  = null;
 
@@ -51,6 +52,54 @@ function getLineForDate(lineName, iso) {
   if (!versions.length) return null;
   return versions.find(v => v.valid_from <= iso && iso <= v.valid_until)
       || (iso < versions[0].valid_from ? versions[0] : versions[versions.length - 1]);
+}
+
+// Datum, nach dem die Fahrplanversion gewählt wird (heute oder Vorschau auf den neuen Fahrplan)
+function versionDate(now) {
+  return previewDate || localIso(now);
+}
+
+// Nächster *großer* Fahrplanwechsel nach `todayIso`: einer, bei dem fast alle
+// Linien auf eine neue Version wechseln (nicht Ferienende oder eine einzelne
+// Linie). Wechsel einzelner Linien innerhalb von 7 Tagen (z.B. C1/C2 erst am
+// Montag) gehören zum selben Wechsel; das Vorschau-Datum ist der Tag, an dem
+// alle davon gültig sind.
+function getUpcomingChange(todayIso) {
+  const lineCount = new Set(linesData.map(l => l.line)).size;
+  const starts    = [...new Set(linesData.map(l => l.valid_from))].filter(d => d > todayIso).sort();
+
+  for (const first of starts) {
+    const limit   = localIso(new Date(new Date(first + 'T12:00:00').getTime() + 7 * 864e5));
+    const cluster = starts.filter(d => d >= first && d <= limit);
+    const changed = new Set(linesData.filter(l => cluster.includes(l.valid_from)).map(l => l.line));
+    if (changed.size >= Math.ceil(lineCount * 0.8)) {
+      return { from: first, preview: cluster[cluster.length - 1] };
+    }
+  }
+  return null;
+}
+
+function fmtDate(iso) {
+  const [y, m, d] = iso.split('-');
+  return `${d}.${m}.${y}`;
+}
+
+function updateVersionButtons(todayIso) {
+  const el = document.getElementById('version-buttons');
+  if (!el) return;
+  const change = getUpcomingChange(todayIso);
+  if (!change) {
+    previewDate = null;
+    el.hidden = true;
+    el.innerHTML = '';
+    return;
+  }
+  if (previewDate && previewDate !== change.preview) previewDate = null;
+  const isNew = previewDate !== null;
+  el.hidden = false;
+  el.innerHTML = `
+    <button class="day-btn${isNew ? '' : ' day-btn--active'}" data-ver="now">Heute gültig</button>
+    <button class="day-btn${isNew ? ' day-btn--active' : ''}" data-ver="${change.preview}">Neuer Fahrplan ab ${fmtDate(change.from)}</button>`;
 }
 
 function getDayType(date) {
@@ -198,7 +247,7 @@ function getStopsForLine(lineName) {
 
 // Returns stops reachable from fromStop on the active line (strictly after it in any direction)
 function getReachableStops(fromStop) {
-  const lineData = getLineForDate(activeLine, localIso(new Date()));
+  const lineData = getLineForDate(activeLine, versionDate(new Date()));
   if (!lineData) return [];
   const seen  = new Set();
   const stops = [];
@@ -245,10 +294,11 @@ function buildLineButtons() {
   const container = document.getElementById('line-buttons');
   if (!container) return;
 
-  container.innerHTML = linesData.map(l => {
-    const cls    = LINE_CLASSES[l.line] || l.line.toLowerCase();
-    const active = l.line === activeLine ? ' line-btn--active' : '';
-    return `<button class="line-btn line-btn--${cls}${active}" data-line="${l.line}">${l.line}</button>`;
+  // Eine Linie hat mehrere Fahrplanversionen in linesData — Button nur einmal je Linie
+  container.innerHTML = [...new Set(linesData.map(l => l.line))].map(line => {
+    const cls    = LINE_CLASSES[line] || line.toLowerCase();
+    const active = line === activeLine ? ' line-btn--active' : '';
+    return `<button class="line-btn line-btn--${cls}${active}" data-line="${line}">${line}</button>`;
   }).join('');
 
   container.querySelectorAll('.line-btn').forEach(btn => {
@@ -550,7 +600,10 @@ function render() {
   });
 
   // Day indicator
-  document.getElementById('day-indicator').textContent = dayLabel(dayType, now);
+  updateVersionButtons(localIso(now));
+  const ind = dayLabel(dayType, now);
+  document.getElementById('day-indicator').textContent =
+    previewDate ? `${ind} · Neuer Fahrplan` : ind;
 
   // Sync time selects in live mode
   if (customTime === null) {
@@ -568,7 +621,7 @@ function render() {
   let html = '';
   let totalFound = 0;
 
-  const activeData = getLineForDate(activeLine, localIso(now));
+  const activeData = getLineForDate(activeLine, versionDate(now));
   if (activeData) {
     const deps = getNextDepartures(activeData, fromStop, toStop, fromMins, 0, dayType, nowMins);
     totalFound = deps.length;
@@ -636,6 +689,16 @@ document.addEventListener('DOMContentLoaded', () => {
       activeDayType = btn.dataset.day;
       render();
     });
+  });
+
+  // Fahrplanversion: heute gültig / Vorschau auf den neuen Fahrplan
+  document.getElementById('version-buttons').addEventListener('click', e => {
+    const btn = e.target.closest('[data-ver]');
+    if (!btn) return;
+    previewDate = btn.dataset.ver === 'now' ? null : btn.dataset.ver;
+    // Stoplisten können sich zwischen den Versionen unterscheiden
+    buildStopLists();
+    render();
   });
 
   // FROM selector: rebuild NACH for reachable stops, then render

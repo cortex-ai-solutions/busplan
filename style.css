@@ -241,6 +241,9 @@ main {
   gap: 6px;
 }
 
+.version-buttons { margin-top: 6px; }
+.version-buttons[hidden] { display: none; }
+
 .day-btn {
   flex: 1;
   min-height: 44px;
