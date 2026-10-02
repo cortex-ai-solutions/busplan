@@ -37,8 +37,24 @@ function nowMinutes() {
   return Math.ceil(exact / 5) * 5;  // round up to nearest 5 min
 }
 
+// Lokales Datum als YYYY-MM-DD (toISOString liefert UTC und kippt nach Mitternacht auf den Vortag)
+function localIso(date) {
+  const p = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}`;
+}
+
+// Fahrplanversion einer Linie für ein Datum. Der Feed enthält mehrere zeitlich
+// begrenzte Versionen (z.B. alter Fahrplan bis 10.10., neuer ab 11.10.).
+// Liegt das Datum außerhalb aller Versionen, gilt die nächstliegende.
+function getLineForDate(lineName, iso) {
+  const versions = linesData.filter(l => l.line === lineName);
+  if (!versions.length) return null;
+  return versions.find(v => v.valid_from <= iso && iso <= v.valid_until)
+      || (iso < versions[0].valid_from ? versions[0] : versions[versions.length - 1]);
+}
+
 function getDayType(date) {
-  const iso = date.toISOString().slice(0, 10);
+  const iso = localIso(date);
   if (holidayDates.has(iso)) return 'sunday';
   const dow = date.getDay();
   if (dow === 0) return 'sunday';
@@ -83,7 +99,12 @@ async function loadData() {
       for (const d of year) holidayDates.add(d);
     }
 
-    linesData.push(...window.BUSPLAN_LINES);
+    // Jede Fahrplanversion wird ein eigener Eintrag mit eigenem Gültigkeitszeitraum
+    for (const l of window.BUSPLAN_LINES) {
+      for (const v of l.versions) {
+        linesData.push({ line: l.line, feed_valid_until: l.valid_until, ...v });
+      }
+    }
 
     // Restore saved line before building stops so the list matches
     const savedLine = localStorage.getItem(STORAGE_LINE);
@@ -142,12 +163,12 @@ function watchForUpdate(reg) {
 }
 
 function checkDataFreshness() {
-  const today = new Date().toISOString().slice(0,10);
-  const stale = linesData.some(d => d.valid_until && d.valid_until < today);
-  if (stale) document.getElementById('stale-warning').removeAttribute('hidden');
+  const today = localIso(new Date());
+  const ends  = linesData.map(d => d.feed_valid_until).filter(Boolean);
+  if (ends.some(d => d < today)) document.getElementById('stale-warning').removeAttribute('hidden');
 
   // Update footer
-  const dates = linesData.map(d => d.valid_until).filter(Boolean).sort();
+  const dates = ends.sort();
   if (dates.length) {
     document.getElementById('data-validity').textContent =
       `Daten: SNG Suhl · gültig bis ${dates[0]}`;
@@ -177,7 +198,7 @@ function getStopsForLine(lineName) {
 
 // Returns stops reachable from fromStop on the active line (strictly after it in any direction)
 function getReachableStops(fromStop) {
-  const lineData = linesData.find(l => l.line === activeLine);
+  const lineData = getLineForDate(activeLine, localIso(new Date()));
   if (!lineData) return [];
   const seen  = new Set();
   const stops = [];
@@ -547,7 +568,7 @@ function render() {
   let html = '';
   let totalFound = 0;
 
-  const activeData = linesData.find(l => l.line === activeLine) || null;
+  const activeData = getLineForDate(activeLine, localIso(now));
   if (activeData) {
     const deps = getNextDepartures(activeData, fromStop, toStop, fromMins, 0, dayType, nowMins);
     totalFound = deps.length;

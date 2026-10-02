@@ -101,6 +101,16 @@ def _get_day_type(dt: datetime.date | None = None) -> str:
     return "weekday"
 
 
+def _directions(data: dict) -> list:
+    """Richtungen der heute gueltigen Fahrplanversion (Feed enthaelt mehrere)."""
+    today = datetime.date.today().isoformat()
+    versions = data["versions"]
+    for v in versions:
+        if v["valid_from"] <= today <= v["valid_until"]:
+            return v["directions"]
+    return (versions[0] if today < versions[0]["valid_from"] else versions[-1])["directions"]
+
+
 def _fuzzy_match(query: str, stops: list[str]) -> str | None:
     """Findet Haltestelle auch bei Tippfehlern oder Abkürzungen."""
     q = query.lower().strip()
@@ -138,7 +148,7 @@ def get_next_departures(
         if not data:
             continue
 
-        for dir in data["directions"]:
+        for dir in _directions(data):
             stops = dir["stops"]
             for s in stops:
                 all_stops.add(s)
@@ -217,7 +227,7 @@ def list_stops(linie: str = "") -> list[str]:
     for line_name in lines_to_check:
         data = _fetch_json(line_name)
         if data:
-            for dir in data["directions"]:
+            for dir in _directions(data):
                 stops.update(dir["stops"])
     return sorted(stops)
 

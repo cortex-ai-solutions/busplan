@@ -106,21 +106,146 @@ def build_service_calendar(calendar, calendar_dates):
     return active
 
 
-def pick_services(line_services, active, holidays, from_date, until_date):
-    """Je Tagesart die Dienstmenge, die im Zeitraum am haeufigsten gilt.
+def _day(yyyymmdd):
+    return datetime.date(int(yyyymmdd[:4]), int(yyyymmdd[4:6]), int(yyyymmdd[6:8]))
 
-    Ab `from_date` (Extraktionstag), damit abgelaufene Ferien-/Altfahrplaene
-    nicht mit dem kommenden Regelfahrplan vermischt werden. Einzelne
-    Sondertage (Feiertage, Brueckentage) fallen als Minderheit heraus.
+
+def _runs_per_day_type(items):
+    """[(datum, dienste)] -> Laeufe gleicher Dienstmenge, Sondertage geglaettet.
+
+    Laeufe mit <= 2 Terminen (Feiertag, Brueckentag) werden dem vorherigen
+    Lauf zugeschlagen. Ein kurzer *erster* Lauf bleibt stehen — das ist der
+    auslaufende alte Fahrplan.
     """
-    counts = defaultdict(Counter)
-    for date, services in active.items():
-        if not (from_date <= date <= until_date): continue
-        todays = frozenset(services & line_services)
-        if todays:
-            counts[classify_date(date, holidays)][todays] += 1
+    runs = []
+    for date, services in items:
+        if runs and runs[-1]["services"] == services:
+            runs[-1]["end"] = date
+            runs[-1]["count"] += 1
+        else:
+            runs.append({"start": date, "end": date, "services": services, "count": 1})
 
-    return {day_type: set(c.most_common(1)[0][0]) for day_type, c in counts.items()}
+    merged = True
+    while merged:
+        merged = False
+        for i in range(1, len(runs)):
+            if runs[i]["count"] <= 2 or runs[i - 1]["services"] == runs[i]["services"]:
+                runs[i - 1]["end"] = runs[i]["end"]
+                runs[i - 1]["count"] += runs[i]["count"]
+                del runs[i]
+                merged = True
+                break
+    return runs
+
+
+def split_versions(line_services, active, holidays, from_date, until_date):
+    """Fahrplanversionen einer Linie mit Gueltigkeitszeitraum.
+
+    Der Feed enthaelt je Linie mehrere zeitlich begrenzte Versionen (z.B.
+    Ferienfahrplan bis 10.10., Regelfahrplan ab 11.10.). Je Tagesart werden die
+    Laeufe gleicher Dienstmenge bestimmt; Versionswechsel sind die Startdaten
+    der Folgelaeufe (Wechsel innerhalb von 7 Tagen zaehlen als einer, bei
+    Wochentag/Samstag/Sonntag liegen sie sonst um Tage auseinander).
+
+    Rueckgabe: [{"from": "YYYYMMDD", "until": "YYYYMMDD", "chosen": {tagesart: dienste}}]
+    """
+    by_type = defaultdict(list)
+    for date in sorted(active):
+        if not (from_date <= date <= until_date): continue
+        todays = frozenset(active[date] & line_services)
+        if todays:
+            by_type[classify_date(date, holidays)].append((date, todays))
+
+    final = {}      # tagesart -> [(datum, dienste)] nach Glaettung
+    changes = []
+    for day_type, items in by_type.items():
+        runs = _runs_per_day_type(items)
+        final[day_type] = [(d, next(r["services"] for r in runs if r["start"] <= d <= r["end"]))
+                           for d, _ in items]
+        changes += [r["start"] for r in runs[1:]]
+
+    boundaries = []
+    for date in sorted(changes):
+        if boundaries and (_day(date) - _day(boundaries[-1])).days <= 7: continue
+        boundaries.append(date)
+
+    starts = [from_date] + boundaries
+    ends   = [(_day(b) - datetime.timedelta(days=1)).strftime("%Y%m%d") for b in boundaries] + [until_date]
+
+    versions = []
+    for start, end in zip(starts, ends):
+        chosen = {}
+        for day_type, items in final.items():
+            inside = Counter(sv for d, sv in items if start <= d <= end)
+            if inside:
+                chosen[day_type] = set(inside.most_common(1)[0][0])
+            else:
+                before = [sv for d, sv in items if d < start]
+                chosen[day_type] = set(before[-1] if before else items[0][1])
+        if versions and versions[-1]["chosen"] == chosen:
+            versions[-1]["until"] = end
+        else:
+            versions.append({"from": start, "until": end, "chosen": chosen})
+    return versions
+
+
+def build_directions(line_trips, trip_st, trip_hs, trip_service, stop_names, chosen):
+    """Richtungen/Fahrtmuster einer Linie fuer eine Fahrplanversion."""
+    # Fahrten nach exakter Stopfolge gruppieren
+    patterns = defaultdict(list)
+    for t in line_trips:
+        tid = t["trip_id"]
+        if not trip_st[tid]: continue
+        if not any(t["service_id"] in svcs for svcs in chosen.values()): continue
+        did = t.get("direction_id", "0")
+        patterns[(did, tuple(s[1] for s in trip_st[tid]))].append(tid)
+
+    # Kurzlaeufer der laengsten passenden Sequenz zuordnen. Linien wie C1/C2
+    # haben ein gutes Dutzend Fahrtvarianten — mit nur einer Referenzfahrt
+    # je Richtung fielen Fahrten und ganze Haltestellen unter den Tisch.
+    refs = []
+    for (did, pattern), tids in sorted(patterns.items(), key=lambda kv: -len(kv[0][1])):
+        match = next((r for r in refs
+                      if r["direction_id"] == did and is_subsequence(pattern, r["ref_ids"])), None)
+        if match:
+            match["trips"].extend(tids)
+        else:
+            refs.append({"direction_id": did, "ref_ids": list(pattern), "trips": list(tids)})
+
+    refs.sort(key=lambda r: (r["direction_id"], -len(r["ref_ids"])))
+
+    directions_out = []
+    for n, ref in enumerate(refs):
+        did, ref_ids = ref["direction_id"], ref["ref_ids"]
+        stop_names_ord = [stop_names.get(sid, sid) for sid in ref_ids]
+
+        hs_list  = [trip_hs.get(t,"") for t in ref["trips"] if trip_hs.get(t)]
+        headsign = max(set(hs_list), key=hs_list.count) if hs_list else f"Richtung {did}"
+
+        schedules = defaultdict(list)
+        for tid in ref["trips"]:
+            row = align_row([(s[1], normalize_time(s[2])) for s in trip_st[tid]], ref_ids)
+            if not (row and any(row)): continue
+            for day_type, services in chosen.items():
+                if trip_service[tid] in services:
+                    schedules[day_type].append(row)
+
+        for day_type in schedules:
+            # Identische Fahrten (gleiche Zeiten) nur einmal behalten
+            unique = {tuple(r): r for r in schedules[day_type]}
+            schedules[day_type] = sorted(unique.values(), key=first_time)
+
+        print(f"      dir{did}/{n} ({headsign}): {len(stop_names_ord)} stops, "
+              + ", ".join(f"{d} {len(v)}" for d, v in sorted(schedules.items())))
+
+        directions_out.append({
+            "id": f"dir{did}_{n}",
+            "direction_id": did,
+            "headsign": headsign,
+            "stops": stop_names_ord,
+            "schedules": dict(schedules)
+        })
+    return directions_out
 
 
 def extract(gtfs_zip_path):
@@ -170,9 +295,7 @@ def extract(gtfs_zip_path):
         trip_service = {t["trip_id"]: t["service_id"] for t in line_trips}
 
         line_services = {t["service_id"] for t in line_trips}
-        chosen = pick_services(line_services, active_days, holidays, from_date, until_date)
-        for day_type, services in sorted(chosen.items()):
-            print(f"  {day_type}: Dienste {sorted(services)}")
+        versions = split_versions(line_services, active_days, holidays, from_date, until_date)
 
         trip_st = defaultdict(list)
         for row in st:
@@ -185,65 +308,23 @@ def extract(gtfs_zip_path):
         for tid in trip_st:
             trip_st[tid].sort(key=lambda x: x[0])
 
-        # Fahrten nach exakter Stopfolge gruppieren
-        patterns = defaultdict(list)
-        for t in line_trips:
-            tid = t["trip_id"]
-            if not trip_st[tid]: continue
-            if not any(t["service_id"] in svcs for svcs in chosen.values()): continue
-            did = t.get("direction_id", "0")
-            patterns[(did, tuple(s[1] for s in trip_st[tid]))].append(tid)
-
-        # Kurzlaeufer der laengsten passenden Sequenz zuordnen. Linien wie C1/C2
-        # haben ein gutes Dutzend Fahrtvarianten — mit nur einer Referenzfahrt
-        # je Richtung fielen Fahrten und ganze Haltestellen unter den Tisch.
-        refs = []
-        for (did, pattern), tids in sorted(patterns.items(), key=lambda kv: -len(kv[0][1])):
-            match = next((r for r in refs
-                          if r["direction_id"] == did and is_subsequence(pattern, r["ref_ids"])), None)
-            if match:
-                match["trips"].extend(tids)
-            else:
-                refs.append({"direction_id": did, "ref_ids": list(pattern), "trips": list(tids)})
-
-        refs.sort(key=lambda r: (r["direction_id"], -len(r["ref_ids"])))
-
-        directions_out = []
-        for n, ref in enumerate(refs):
-            did, ref_ids = ref["direction_id"], ref["ref_ids"]
-            stop_names_ord = [stop_names.get(sid, sid) for sid in ref_ids]
-
-            hs_list  = [trip_hs.get(t,"") for t in ref["trips"] if trip_hs.get(t)]
-            headsign = max(set(hs_list), key=hs_list.count) if hs_list else f"Richtung {did}"
-
-            print(f"  dir{did}/{n} ({headsign}): {len(stop_names_ord)} stops")
-
-            schedules = defaultdict(list)
-            for tid in ref["trips"]:
-                row = align_row([(s[1], normalize_time(s[2])) for s in trip_st[tid]], ref_ids)
-                if not (row and any(row)): continue
-                for day_type, services in chosen.items():
-                    if trip_service[tid] in services:
-                        schedules[day_type].append(row)
-
-            for day_type in schedules:
-                # Identische Fahrten (gleiche Zeiten) nur einmal behalten
-                unique = {tuple(r): r for r in schedules[day_type]}
-                schedules[day_type] = sorted(unique.values(), key=first_time)
-                print(f"    {day_type}: {len(schedules[day_type])} trips")
-
-            directions_out.append({
-                "id": f"dir{did}_{n}",
-                "direction_id": did,
-                "headsign": headsign,
-                "stops": stop_names_ord,
-                "schedules": dict(schedules)
+        versions_out = []
+        for ver in versions:
+            chosen = ver["chosen"]
+            print(f"  Version {fmt_date(ver['from'])} bis {fmt_date(ver['until'])}")
+            for day_type, services in sorted(chosen.items()):
+                print(f"    {day_type}: Dienste {sorted(services)}")
+            versions_out.append({
+                "valid_from":  fmt_date(ver["from"]),
+                "valid_until": fmt_date(ver["until"]),
+                "directions":  build_directions(line_trips, trip_st, trip_hs, trip_service,
+                                                stop_names, chosen)
             })
 
         out_path = OUTPUT_DIR / f"{line_name.lower()}.json"
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump({"line": line_name, "valid_from": valid_from, "valid_until": valid_until,
-                       "directions": directions_out}, f, ensure_ascii=False, indent=2)
+                       "versions": versions_out}, f, ensure_ascii=False, indent=2)
         print(f"  Written: {out_path} ({out_path.stat().st_size/1024:.1f} KB)")
 
     # Generate data-bundle.js — includes all extracted lines dynamically
