@@ -547,7 +547,7 @@ function renderBoardingHint(lineData, fromStop, toStop, show) {
 
 // ── Rendering ────────────────────────────────────────────────
 
-function buildCard(dep, isFirst) {
+function buildCard(dep, isFirst, showOrigin) {
   const cardClass = isFirst ? 'departure-card departure-card--next'
     : (dep.urgency === 'now' || dep.urgency === 'hot') ? 'departure-card departure-card--soon'
     : 'departure-card';
@@ -563,7 +563,7 @@ function buildCard(dep, isFirst) {
     ? `<div class="dep-arrival">Ankunft: ${dep.arrTime}</div>`
     : '';
 
-  const originHtml = dep.originStop
+  const originHtml = (showOrigin && dep.originStop)
     ? `<div class="dep-origin">Fahrt ab ${dep.originStop.trim()}</div>`
     : '';
 
@@ -625,7 +625,12 @@ function render() {
   if (activeData) {
     const deps = getNextDepartures(activeData, fromStop, toStop, fromMins, 0, dayType, nowMins);
     totalFound = deps.length;
-    html = deps.map((d, i) => buildCard(d, i === 0)).join('');
+    // "Fahrt ab …" nur zeigen, wenn zwei Busse derselben Linie kurz hintereinander
+    // fahren (verschiedene Routen) — sonst ist es nur Rauschen.
+    const close = (a, b) => a !== b && a.line === b.line && Math.abs(a.depMins - b.depMins) <= 5;
+    html = deps.map((d, i) =>
+      buildCard(d, i === 0, deps.some(o => close(d, o)))
+    ).join('');
   }
 
   // Einstiegs-Hinweis nur zeigen, wenn es überhaupt Abfahrten gibt
