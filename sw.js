@@ -1,7 +1,7 @@
 /* Helena's Busplan — Service Worker
    Caches app shell on install; serves from cache, updates in background. */
 
-const CACHE_NAME = 'busplan-v11';
+const CACHE_NAME = 'busplan-v12';
 const SHELL = [
   './',
   './index.html',

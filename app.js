@@ -518,6 +518,13 @@ function getBoardingInfo(lineData, fromStop, toStop) {
   }));
 }
 
+// Zusatzbezeichnung der Straßenseite, nur für die Heimat-Haltestelle:
+// Bus aus Richtung Bocksberg (fährt weiter nach Rosenau) = Waldseite,
+// Bus aus Richtung Rosenau (fährt weiter nach Bocksberg) = Fluss-Seite.
+const SIDE_NAMES = {
+  [FAVORITE_STOP]: { 'Goldlauter, Rosenau': 'Waldseite', 'Bocksberg': 'Fluss-Seite' }
+};
+
 function renderBoardingHint(lineData, fromStop, toStop, show) {
   const el = document.getElementById('boarding-hint');
   if (!el) return;
@@ -531,8 +538,9 @@ function renderBoardingHint(lineData, fromStop, toStop, show) {
 
   el.hidden = false;
   el.innerHTML = infos.map(info => {
+    const sideName = (SIDE_NAMES[fromStop] || {})[info.goesTo];
     const side = info.goesTo
-      ? `Seite Richtung <b>${info.goesTo}</b>`
+      ? `Seite Richtung <b>${info.goesTo}</b>${sideName ? ` — <b>${sideName}</b>` : ''}`
       : 'Endhaltestelle — hier steigt man aus';
     const origin = info.comesFrom
       ? `<div class="bh-from">Bus kommt von ${info.comesFrom}</div>`
